@@ -12,7 +12,7 @@ use rocket::serde::json::{Json, serde_json};
 use rocket::yansi::Paint;
 use rocket_cors::{AllowedOrigins, CorsOptions, Method};
 use serde::__private::de::IdentifierDeserializer;
-
+use std::sync::{Arc, Mutex, Once};
 
 #[derive(Debug, serde::Serialize, Clone,serde::Deserialize,PartialEq)]
 struct Task {
@@ -24,6 +24,7 @@ struct Task {
 struct TaskList {
     tasks: Vec<Task>,
 }
+
 fn create_task_list() -> TaskList {
     TaskList {
         tasks: vec![
@@ -53,6 +54,22 @@ fn create_task_list() -> TaskList {
     }
 }
 
+type SharedState = Arc<Mutex<TaskList>>;
+
+// Function to create and return a closure that stores a value
+fn get_shared_state() -> &'static SharedState {
+    // Initialize the shared state if it doesn't exist yet
+    static mut SHARED_STATE: Option<SharedState> = None;
+    static ONCE: Once = Once::new();
+
+    unsafe {
+        ONCE.call_once(|| {
+            SHARED_STATE = Some(Arc::new(Mutex::new(TaskList { tasks: Vec::new() })));
+        });
+
+        SHARED_STATE.as_ref().unwrap()
+    }
+}
 #[get("/teams")]
 fn get_teams() -> Json<TaskList> {
     // Create a list of tasks similar to the Java code
@@ -66,11 +83,34 @@ fn get_teams() -> Json<TaskList> {
     let task_list_response = TaskList { tasks: selected_tasks };
     Json(task_list_response)
 }
+#[get("/teamsChoose")]
+fn get_teams_choose() -> Json<TaskList> {
+    // Create a list of tasks similar to the Java code
 
+
+    // Shuffle the tasks randomly
+    let shared_state = get_shared_state();
+    let mut state_guard = shared_state.lock().unwrap();
+    // Create and return the TaskList struct
+    Json(state_guard.to_owned())
+}
 #[post("/teamspost", format = "text", data = "<user_input>")]
-fn hello_post(user_input: String) -> Result<String, Status> {
-    let task: String = user_input;
-    println!("Received data: {:?}", task.to_string());
+fn hello_post(user_input: &str) -> Result<String, Status> {
+    println!("TaskList: {:?}", user_input);
+    let task_list_result = json_to_tasklist(user_input);
+
+    match task_list_result {
+        Ok(task_list) => {
+            let shared_state = get_shared_state();
+            let mut state_guard = shared_state.lock().unwrap();
+            state_guard.tasks = task_list.tasks;
+
+            println!("TaskList: {:?}", state_guard);
+        }
+        Err(e) => {
+            println!("Error parsing JSON: {}", e);
+        }
+    }
     Ok("Data received successfully".to_string())
 
 }
@@ -101,7 +141,7 @@ fn rocket() -> _ {
 
     rocket::build()
         .configure(rocket::Config::figment().merge(("port", 4000)))
-        .mount("/api", routes![get_teams,hello_post])
+        .mount("/api", routes![get_teams,hello_post,get_teams_choose])
         .attach(cors())
 
 
